@@ -30,7 +30,6 @@ class Timer:
     def elapsed(self):
         return time.clock() - self.start
 
-
 DEFAULT_STRATEGIES = BKZ.Param(block_size=1, strategies="default.json").strategies
 
 
@@ -38,23 +37,23 @@ class Tuner(object):
     def __init__(self, b):
         self.last_prunings = None
         self.data = {}
-        self.counts = {}        
+        self.counts = {}
         self.b = b
         self.proba = .5
-        if b>1 and b<max(YOLO_PRUNER_MIN_BLOCK_SIZE, YOLO_PREPROC_MIN_BLOCK_SIZE):
+        if b > 1 and b < max(YOLO_PRUNER_MIN_BLOCK_SIZE, YOLO_PREPROC_MIN_BLOCK_SIZE):
             self.strategy = DEFAULT_STRATEGIES[b]
 
     def get_variations(self, preprocessing):
         V = [preprocessing]
-        
+
         minb = 10
-        if len(preprocessing)==0:
+        if len(preprocessing) == 0:
             V.append(tuple([minb]))
             # V.append(tuple([(self.b/3, .5)]))
             return V
-        if len(preprocessing)==1:
+        if len(preprocessing) == 1:
             b = preprocessing[0]
-            if b<minb+6:
+            if b < minb + 6:
                 V.append(tuple([]))
             for bb in reversed(range(max(b-2, minb), min(b+3, self.b - YOLO_GAP_PREPROC_BLOCK_SIZE))):
                 V.append(tuple([bb]))
@@ -66,7 +65,7 @@ class Tuner(object):
         # self.count += 1
         if self.b < YOLO_PREPROC_MIN_BLOCK_SIZE:
             return self.strategy.preprocessing_block_sizes
-        if len(self.data)==0:
+        if len(self.data) == 0:
             return tuple()
         best = max(self.data, key=self.data.get)
         best_efficiency = self.data[best]
@@ -80,7 +79,7 @@ class Tuner(object):
         variation = variations[randint(0, len(variations)-1)]
         variation_efficiency = self.data[variation]
         # print self.b, best, variations
-        ratio = best_efficiency / variation_efficiency 
+        ratio = best_efficiency / variation_efficiency
         p = ceil(ratio)
         if randint(0, p) == 0:
             return variation
@@ -102,7 +101,7 @@ class Tuner(object):
         R = tuple([M.get_r(i, i) for i in range(k, k+b)])
         overhead = (preproc_time + RESTART_PENALTY) * NODE_PER_SEC
         start_from = self.last_prunings
-        pruning = prune(radius, overhead, target_prob, [R], 
+        pruning = prune(radius, overhead, target_prob, [R],
                         descent_method="gradient", precision=53, start_from=start_from)
         self.last_prunings = pruning.coefficients
         self.proba = (self.proba * YOLO_MEMORY_LENGTH) + pruning.probability
@@ -121,7 +120,7 @@ class Tuner(object):
             x = self.data[preprocessing]
             c = self.counts[preprocessing]
             f = min(c, YOLO_MEMORY_LENGTH)
-            x = f * efficiency + x            
+            x = f * efficiency + x
             x /= (f+1)
             c += 1
         else:
@@ -145,7 +144,6 @@ class BKZReduction(BKZ2):
             self.tuners = [Tuner(b) for b in range(YOLO_MAX_BLOCK_SIZE)]
         else:
             self.tuners = tuners
-
 
     def __call__(self, params, min_row=0, max_row=-1):
         """Run the BKZ algorithm with parameters `param`.
@@ -171,10 +169,10 @@ class BKZReduction(BKZ2):
             print
             with tracer.context("tour", i):
                 clean = self.tour(params, min_row, max_row, tracer)
-            print "proba %.4f"%self.tuners[params.block_size].proba, 
+            print "proba %.4f" % self.tuners[params.block_size].proba,
             for x in sorted(self.tuners[params.block_size].data.keys()):
                 try:
-                    print x, "\t %d \t %.2f "%(self.tuners[params.block_size].counts[x], self.tuners[params.block_size].data[x])
+                    print x, "\t %d \t %.2f " % (self.tuners[params.block_size].counts[x], self.tuners[params.block_size].data[x])
                 except:
                     pass
             print
@@ -238,7 +236,7 @@ class BKZReduction(BKZ2):
         target_prob = params.min_success_probability
 
         while rem_prob > 1. - target_prob:
-            tmp_target_prob =  1.01 * (target_prob - 1)/rem_prob + 1.01            
+            tmp_target_prob = 1.01 * (target_prob - 1)/rem_prob + 1.01
 
             if inserted == 0:
                 with tracer.context("randomize"):
@@ -252,7 +250,7 @@ class BKZReduction(BKZ2):
                 radius, pruning = self.tuners[block_size].enum(self.M, kappa, tmp_target_prob, timer.elapsed())
             solutions = self.svp_call(kappa, block_size, radius, pruning, tracer=tracer)
             solution = solutions[0]
-            if solution == None:
+            if solution is None:
                 hints = []
             else:
                 hints = solutions[1:]
@@ -298,7 +296,7 @@ class BKZReduction(BKZ2):
         """
         M = self.M
 
-        if (solution is not None) and len(hints)==0:
+        if (solution is not None) and len(hints) == 0:
             nonzero_vectors = len([x for x in solution if x])
             if nonzero_vectors == 1:
                 first_nonzero_vector = None
@@ -315,7 +313,7 @@ class BKZReduction(BKZ2):
         if solution is not None:
             vectors = [solution] + hints
         else:
-            if len(hints)==0:
+            if len(hints) == 0:
                 return 0
             vectors = hints
         l = len(vectors)
@@ -323,7 +321,7 @@ class BKZReduction(BKZ2):
         for vector in vectors:
             M.create_row()
             with M.row_ops(M.d-1, M.d):
-                for i in range(block_size):                    
+                for i in range(block_size):                   
                     M.row_addmul(M.d-1, kappa + i, vector[i])
 
         for i in reversed(range(l)):
@@ -339,9 +337,9 @@ class BKZReduction(BKZ2):
         return l
 
     def filter_hints(self, hints):
-        return [v for v in hints if sum([x*x for x in v]) > 1.5]      
+        return [v for v in hints if sum([x*x for x in v]) > 1.5]
 
-p = BKZ.Param(45, max_loops=8, min_success_probability=0.5, flags=BKZ.DEFAULT | BKZ.VERBOSE)
+p = BKZ.Param(45, max_loops=8, min_success_probability=0.5, flags=BKZ.VERBOSE)
 n = 160
 A = IntegerMatrix.random(n, "qary", k=n//2, bits=30)
 yBKZ = BKZReduction(A)
@@ -350,4 +348,4 @@ t = time.time()
 yBKZ(p)
 print yBKZ.trace.report()
 t = time.time() - t
-print "  time: %.2fs"%(t,)
+print "  time: %.2fs" % (t,)
