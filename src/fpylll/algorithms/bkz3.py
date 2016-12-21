@@ -321,7 +321,7 @@ class BKZReduction(BKZ2):
         for vector in vectors:
             M.create_row()
             with M.row_ops(M.d-1, M.d):
-                for i in range(block_size):                   
+                for i in range(block_size):
                     M.row_addmul(M.d-1, kappa + i, vector[i])
 
         for i in reversed(range(l)):
