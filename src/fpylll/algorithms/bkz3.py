@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 
 from sys import stderr
+from copy import copy
 
 from random import randint
-from fpylll import BKZ, Enumeration, EnumerationError, IntegerMatrix, prune
+from fpylll import LLL, BKZ, Enumeration, EnumerationError, IntegerMatrix, prune
 from fpylll.algorithms.bkz import BKZReduction as BKZBase
 from fpylll.algorithms.bkz2 import BKZReduction as BKZ2
 from fpylll.util import gaussian_heuristic
@@ -20,6 +21,54 @@ YOLO_MEMORY_LENGTH = 6
 GH_FACTOR = 1.1
 NODE_PER_SEC = 2**26
 RESTART_PENALTY = 0.01
+
+
+class BKZ3Param():
+    def __init__(self, block_size, strategies=None,
+                 delta=LLL.DEFAULT_DELTA, flags=BKZ.DEFAULT,
+                 max_loops=0, max_time=0,
+                 auto_abort=None,
+                 gh_factor=None,
+                 min_success_probability=BKZ.DEFAULT_MIN_SUCCESS_PROBABILITY,
+                 rerandomization_density=BKZ.DEFAULT_RERANDOMIZATION_DENSITY,
+                 dump_gso_filename=None):
+        """
+        Create BKZ parameters object.
+
+        :param block_size: an integer from 1 to ``nrows``
+        :param strategies: a filename or a list of Strategies
+        :param delta: LLL parameter `0.25 < δ < 1.0`
+        :param flags: flags
+        :param max_loops: maximum number of full loops
+        :param max_time: stop after time seconds (up to loop completion)
+        :param auto_abort: heuristic, stop when the average slope of `\log(||b_i^*||)` does not
+            decrease fast enough.  If a tuple is given it is parsed as ``(scale, max_iter)`` such
+            that the algorithm will terminate if for ``max_iter`` loops the slope is not smaller
+            than ``scale * old_slope`` where ``old_slope`` was the old minimum.  If ``True`` is
+            given, this is equivalent to providing ``(1.0,5)`` which is fpLLL's default.
+        :param gh_factor: heuristic, if set then the enumeration bound will be set to
+            ``gh_factor`` times the Gaussian Heuristic.  If ``True`` then ``gh_factor`` is set to
+            1.1, which is fpLLL's default.
+        :param min_success_probability: minimum success probability in an SVP reduction (when using
+            pruning)
+        :param rerandomization_density: density of rerandomization operation when using extreme
+            pruning
+        :param dump_gso_filename: if this is not ``None`` then the logs of the norms of the
+            Gram-Schmidt vectors are written to this file after each BKZ loop.
+        """
+        self.bkz_param = BKZ.Param(block_size, strategies,
+                                  delta, flags,
+                                  max_loops, max_time,
+                                  auto_abort,
+                                  gh_factor,
+                                  min_success_probability,
+                                  rerandomization_density,
+                                  dump_gso_filename)
+        self.lll_eta = 0.51
+
+    def set_lll_eta(self, eta):
+        self.lll_eta = eta
+
 
 class Timer:
     def __init__(self):
@@ -153,10 +202,13 @@ class BKZReduction(BKZ2):
         :param max_row: stop processing in this row (exclusive)
 
         """
-        tracer = BKZTreeTracer(self, verbosity=params.flags & BKZ.VERBOSE)
+        tracer = BKZTreeTracer(self, verbosity=params.bkz_param.flags & BKZ.VERBOSE)
 
-        if params.flags & BKZ.AUTO_ABORT:
+        if params.bkz_param.flags & BKZ.AUTO_ABORT:
             auto_abort = BKZ.AutoAbort(self.M, self.A.nrows)
+        if params.lll_eta is not LLL.DEFAULT_ETA:
+            print "Setting weaker LLL to eta=" + str(params.lll_eta)
+            self.lll_obj = LLL.Reduction(self.M, flags=LLL.DEFAULT, eta=params.lll_eta)
 
         cputime_start = time.clock()
 
@@ -167,26 +219,25 @@ class BKZReduction(BKZ2):
         i = 0
         self.ith_tour = 0
         while True:
-            print
             with tracer.context("tour", i):
                 self.ith_block = 0
                 self.ith_tour += 1
-                clean = self.tour(params, min_row, max_row, tracer)
-            print "proba %.4f" % self.tuners[params.block_size].proba,
-            for x in sorted(self.tuners[params.block_size].data.keys()):
+                clean = self.tour(params.bkz_param, min_row, max_row, tracer)
+            print "proba %.4f" % self.tuners[params.bkz_param.block_size].proba
+            for x in sorted(self.tuners[params.bkz_param.block_size].data.keys()):
                 try:
-                    print x, "\t %d \t %.2f " % (self.tuners[params.block_size].counts[x], self.tuners[params.block_size].data[x])
+                    print x, "\t %d \t %.2f " % (self.tuners[params.bkz_param.block_size].counts[x], self.tuners[params.bkz_param.block_size].data[x])
                 except:
                     pass
             print
             i += 1
-            if (not clean) or params.block_size >= self.A.nrows:
+            if (not clean) or params.bkz_param.block_size >= self.A.nrows:
                 break
-            if (params.flags & BKZ.AUTO_ABORT) and auto_abort.test_abort():
+            if (params.bkz_param.flags & BKZ.AUTO_ABORT) and auto_abort.test_abort():
                 break
-            if (params.flags & BKZ.MAX_LOOPS) and i >= params.max_loops:
+            if (params.bkz_param.flags & BKZ.MAX_LOOPS) and i >= params.bkz_param.max_loops:
                 break
-            if (params.flags & BKZ.MAX_TIME) and time.clock() - cputime_start >= params.max_time:
+            if (params.bkz_param.flags & BKZ.MAX_TIME) and time.clock() - cputime_start >= params.bkz_param.max_time:
                 break
 
         self.trace = tracer.trace
@@ -249,8 +300,8 @@ class BKZReduction(BKZ2):
 
             with tracer.context("preprocessing"):
                 preprocessing = self.tuners[block_size].get_preprocessing_block_sizes()
-                if len(preprocessing) > 0:
-                    print >> stderr, self.ith_tour, self.ith_block, block_size, preprocessing
+#                if len(preprocessing) > 0:
+#                    print >> stderr, self.ith_tour, self.ith_block, block_size, preprocessing
                 self.svp_preprocessing(kappa, block_size, params, preprocessing, tracer)
 
             with tracer.context("pruner"):
@@ -346,12 +397,24 @@ class BKZReduction(BKZ2):
     def filter_hints(self, hints):
         return [v for v in hints if sum([x*x for x in v]) > 1.5]
 
-p = BKZ.Param(60, max_loops=10, min_success_probability=0.5, flags=BKZ.VERBOSE)
 n = 160
+bs = 60
+loops = 8
 A = IntegerMatrix.random(n, "qary", k=n//2, bits=30)
-yBKZ = BKZReduction(A)
+print "Matrix ready"
+p = BKZ3Param(bs, max_loops=loops, min_success_probability=0.5, flags=BKZ.VERBOSE | BKZ.BOUNDED_LLL)
+yBKZ = BKZReduction(copy(A))
 
 t = time.time()
 yBKZ(p)
+t = time.time() - t
+print "  time: %.2fs" % (t,)
+
+p2 = BKZ3Param(bs, max_loops=loops, min_success_probability=0.5, flags=BKZ.VERBOSE | BKZ.BOUNDED_LLL)
+p2.set_lll_eta(0.71)
+yBKZ = BKZReduction(A)
+
+t = time.time()
+yBKZ(p2)
 t = time.time() - t
 print "  time: %.2fs" % (t,)
