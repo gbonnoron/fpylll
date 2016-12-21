@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 
+from sys import stderr
+
 from random import randint
-from fpylll import BKZ, Enumeration, EnumerationError, IntegerMatrix
-#from fpylll import LLL, BKZ, GSO, Enumeration, EnumerationError, IntegerMatrix, prune
+from fpylll import BKZ, Enumeration, EnumerationError, IntegerMatrix, prune
 from fpylll.algorithms.bkz import BKZReduction as BKZBase
 from fpylll.algorithms.bkz2 import BKZReduction as BKZ2
 from fpylll.util import gaussian_heuristic
@@ -20,7 +21,6 @@ GH_FACTOR = 1.1
 NODE_PER_SEC = 2**26
 RESTART_PENALTY = 0.01
 
-
 class Timer:
     def __init__(self):
         self.start = time.clock()
@@ -34,14 +34,14 @@ DEFAULT_STRATEGIES = BKZ.Param(block_size=1, strategies="default.json").strategi
 
 
 class Tuner(object):
-    def __init__(self, b):
+    def __init__(self, block_size):
         self.last_prunings = None
         self.data = {}
         self.counts = {}
-        self.b = b
+        self.block_size = block_size
         self.proba = .5
-        if b > 1 and b < max(YOLO_PRUNER_MIN_BLOCK_SIZE, YOLO_PREPROC_MIN_BLOCK_SIZE):
-            self.strategy = DEFAULT_STRATEGIES[b]
+        if block_size > 1 and block_size < max(YOLO_PRUNER_MIN_BLOCK_SIZE, YOLO_PREPROC_MIN_BLOCK_SIZE):
+            self.strategy = DEFAULT_STRATEGIES[block_size]
 
     def get_variations(self, preprocessing):
         V = [preprocessing]
@@ -49,21 +49,21 @@ class Tuner(object):
         minb = 10
         if len(preprocessing) == 0:
             V.append(tuple([minb]))
-            # V.append(tuple([(self.b/3, .5)]))
+            # V.append(tuple([(self.block_size/3, .5)]))
             return V
         if len(preprocessing) == 1:
-            b = preprocessing[0]
-            if b < minb + 6:
+            block_size = preprocessing[0]
+            if block_size < minb + 6:
                 V.append(tuple([]))
-            for bb in reversed(range(max(b-2, minb), min(b+3, self.b - YOLO_GAP_PREPROC_BLOCK_SIZE))):
+            for bb in reversed(range(max(block_size-2, minb), min(block_size+3, self.block_size - YOLO_GAP_PREPROC_BLOCK_SIZE))):
                 V.append(tuple([bb]))
             return V
         assert False
 
-    def preprocess(self):
+    def get_preprocessing_block_sizes(self):
         # return tuple()
         # self.count += 1
-        if self.b < YOLO_PREPROC_MIN_BLOCK_SIZE:
+        if self.block_size < YOLO_PREPROC_MIN_BLOCK_SIZE:
             return self.strategy.preprocessing_block_sizes
         if len(self.data) == 0:
             return tuple()
@@ -78,7 +78,7 @@ class Tuner(object):
 
         variation = variations[randint(0, len(variations)-1)]
         variation_efficiency = self.data[variation]
-        # print self.b, best, variations
+        # print self.block_size, best, variations
         ratio = best_efficiency / variation_efficiency
         p = ceil(ratio)
         if randint(0, p) == 0:
@@ -86,19 +86,19 @@ class Tuner(object):
         else:
             return best
 
-    def enum(self, M, k, target_prob, preproc_time):
-        b = self.b
+    def get_pruning(self, M, kappa, target_prob, preproc_time):
+        block_size = self.block_size
 
-        radius = M.get_r(k, k) * .99
-        root_det = M.get_root_det(k, k + b - 1)
-        gh_radius, ge = gaussian_heuristic(radius, 0, b, root_det, 1.)
-        if b > 30:
+        radius = M.get_r(kappa, kappa) * .99
+        root_det = M.get_root_det(kappa, kappa + block_size - 1)
+        gh_radius, ge = gaussian_heuristic(radius, 0, block_size, root_det, 1.)
+        if block_size > 30:
             radius = min(radius, 1.21 * gh_radius * 2**ge)
 
-        if b < YOLO_PRUNER_MIN_BLOCK_SIZE:
+        if block_size < YOLO_PRUNER_MIN_BLOCK_SIZE:
             return radius, self.strategy.get_pruning(radius, gh_radius * 2**ge)
 
-        R = tuple([M.get_r(i, i) for i in range(k, k+b)])
+        R = tuple([M.get_r(i, i) for i in range(kappa, kappa+block_size)])
         overhead = (preproc_time + RESTART_PENALTY) * NODE_PER_SEC
         start_from = self.last_prunings
         pruning = prune(radius, overhead, target_prob, [R],
@@ -108,7 +108,7 @@ class Tuner(object):
         self.proba /= YOLO_MEMORY_LENGTH + 1
         return radius, pruning
 
-    def enum_for_hints(self, M, k, b, preproc_time):
+    def enum_for_hints(self, M, kappa, block_size, preproc_time):
         return 0, None
 
     def feedback(self, preprocessing, pruning, time):
@@ -141,7 +141,7 @@ class BKZReduction(BKZ2):
         self.recycle = recycle
 
         if tuners is None:
-            self.tuners = [Tuner(b) for b in range(YOLO_MAX_BLOCK_SIZE)]
+            self.tuners = [Tuner(block_size) for block_size in range(YOLO_MAX_BLOCK_SIZE)]
         else:
             self.tuners = tuners
 
@@ -165,9 +165,12 @@ class BKZReduction(BKZ2):
         #     self.lll_obj()
 
         i = 0
+        self.ith_tour = 0
         while True:
             print
             with tracer.context("tour", i):
+                self.ith_block = 0
+                self.ith_tour += 1
                 clean = self.tour(params, min_row, max_row, tracer)
             print "proba %.4f" % self.tuners[params.block_size].proba,
             for x in sorted(self.tuners[params.block_size].data.keys()):
@@ -235,6 +238,8 @@ class BKZReduction(BKZ2):
         rem_prob, inserted = 1.0, 1
         target_prob = params.min_success_probability
 
+        if (block_size == 60):
+            self.ith_block += 1
         while rem_prob > 1. - target_prob:
             tmp_target_prob = 1.01 * (target_prob - 1)/rem_prob + 1.01
 
@@ -243,11 +248,13 @@ class BKZReduction(BKZ2):
                     self.randomize_block(kappa+1, kappa+block_size)
 
             with tracer.context("preprocessing"):
-                preprocessing = self.tuners[block_size].preprocess()
+                preprocessing = self.tuners[block_size].get_preprocessing_block_sizes()
+                if len(preprocessing) > 0:
+                    print >> stderr, self.ith_tour, self.ith_block, block_size, preprocessing
                 self.svp_preprocessing(kappa, block_size, params, preprocessing, tracer)
 
             with tracer.context("pruner"):
-                radius, pruning = self.tuners[block_size].enum(self.M, kappa, tmp_target_prob, timer.elapsed())
+                radius, pruning = self.tuners[block_size].get_pruning(self.M, kappa, tmp_target_prob, timer.elapsed())
             solutions = self.svp_call(kappa, block_size, radius, pruning, tracer=tracer)
             solution = solutions[0]
             if solution is None:
@@ -339,13 +346,12 @@ class BKZReduction(BKZ2):
     def filter_hints(self, hints):
         return [v for v in hints if sum([x*x for x in v]) > 1.5]
 
-p = BKZ.Param(45, max_loops=8, min_success_probability=0.5, flags=BKZ.VERBOSE)
+p = BKZ.Param(60, max_loops=10, min_success_probability=0.5, flags=BKZ.VERBOSE)
 n = 160
 A = IntegerMatrix.random(n, "qary", k=n//2, bits=30)
 yBKZ = BKZReduction(A)
 
 t = time.time()
 yBKZ(p)
-print yBKZ.trace.report()
 t = time.time() - t
 print "  time: %.2fs" % (t,)
