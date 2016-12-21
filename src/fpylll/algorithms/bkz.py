@@ -32,35 +32,24 @@ class BKZReduction:
         :param A: an integer matrix, a GSO object or an LLL object
 
         """
-        if isinstance(A, GSO.Mat):
-            L = None
-            M = A
-            A = M.B
-        elif isinstance(A, LLL.Reduction):
-            L = A
-            M = L.M
-            A = M.B
+        if isinstance(A, LLL.Reduction):
+            L, M, B = A, A.M, A.M.B
+        elif isinstance(A, GSO.Mat):
+            L, M, B = None, A, A.B
         elif isinstance(A, IntegerMatrix):
-            L = None
-            M = None
-            A = A
+            L, M, B = None, None, A
         else:
-            raise TypeError("Matrix must be IntegerMatrix but got type '%s'"%type(A))
+            raise TypeError("type of A must be in {IntegerMatrix, GSO.Mat, LLL.Reduction}, but got type '%s'"%type(A))
 
         if M is None and L is None:
-            # run LLL first, but only if a matrix was passed
-            wrapper = LLL.Wrapper(A)
+            wrapper = LLL.Wrapper(B)
             wrapper()
-
-        self.A = A
         if M is None:
-            self.M = GSO.Mat(A, flags=GSO.ROW_EXPO)
-        else:
-            self.M = M
+            M = GSO.Mat(B, flags=GSO.ROW_EXPO)
         if L is None:
-            self.lll_obj = LLL.Reduction(self.M, flags=LLL.DEFAULT)
-        else:
-            self.lll_obj = L
+            L = LLL.Reduction(M, flags=LLL.DEFAULT)
+
+        self.lll_obj, self.M, self.A = L, M, B
 
     def __call__(self, params, min_row=0, max_row=-1):
         """Run the BKZ algorithm with parameters `param`.
