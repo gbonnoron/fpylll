@@ -6,12 +6,10 @@ from gso cimport MatGSO
 from fplll cimport BKZParam as BKZParam_c
 from fplll cimport Pruning as Pruning_c
 from fplll cimport Strategy as Strategy_c
+from fplll cimport PrunerMetric
 
 cdef class Pruning:
     cdef Pruning_c _core
-    cdef readonly float radius_factor
-    cdef readonly tuple coefficients
-    cdef readonly float probability
 
     @staticmethod
     cdef Pruning from_cxx(Pruning_c & p)
@@ -22,9 +20,6 @@ cdef class Pruning:
 
 cdef class Strategy:
     cdef Strategy_c _core
-    cdef readonly int block_size
-    cdef readonly tuple pruning_parameters
-    cdef readonly tuple preprocessing_block_sizes
 
     @staticmethod
     cdef Strategy from_cxx(Strategy_c & s)
@@ -38,3 +33,4 @@ cdef class BKZParam:
     cdef vector[Strategy_c] strategies_c
     cdef BKZParam_c *o
     cdef readonly tuple strategies
+    cdef aux

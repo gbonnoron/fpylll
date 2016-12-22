@@ -4,7 +4,7 @@ from random import randint
 from fpylll import BKZ, Enumeration, EnumerationError
 from fpylll.algorithms.bkz import BKZReduction as BKZBase
 from fpylll.algorithms.bkz_stats import dummy_tracer
-from fpylll.util import gaussian_heuristic
+from fpylll.util import adjust_radius_to_gh_bound
 
 
 class BKZReduction(BKZBase):
@@ -22,7 +22,7 @@ class BKZReduction(BKZBase):
 
         radius, re = self.M.get_r_exp(kappa, kappa)
         root_det = self.M.get_root_det(kappa, kappa + block_size)
-        gh_radius, ge = gaussian_heuristic(radius, re, block_size, root_det, 1.0)
+        gh_radius, ge = adjust_radius_to_gh_bound(radius, re, block_size, root_det, 1.0)
         return strategy.get_pruning(radius  * 2**re, gh_radius * 2**ge)
 
     def randomize_block(self, min_row, max_row, tracer=dummy_tracer, density=0):
@@ -101,7 +101,7 @@ class BKZReduction(BKZBase):
 
             if param.flags & BKZ.GH_BND and block_size > 30:
                 root_det = self.M.get_root_det(kappa, kappa + block_size)
-                radius, expo = gaussian_heuristic(radius, expo, block_size, root_det, param.gh_factor)
+                radius, expo = adjust_radius_to_gh_bound(radius, expo, block_size, root_det, param.gh_factor)
 
             pruning = self.get_pruning(kappa, block_size, param, tracer)
 
@@ -109,7 +109,7 @@ class BKZReduction(BKZBase):
                 enum_obj = Enumeration(self.M)
                 with tracer.context("enumeration",
                                     enum_obj=enum_obj,
-                                    probability=pruning.probability,
+                                    probability=pruning.expectation,
                                     full=block_size==param.block_size):
                     solution, max_dist = enum_obj.enumerate(kappa, kappa + block_size, radius, expo,
                                                             pruning=pruning.coefficients)[0]
@@ -120,7 +120,7 @@ class BKZReduction(BKZBase):
             except EnumerationError:
                 rerandomize = True
 
-            remaining_probability *= (1 - pruning.probability)
+            remaining_probability *= (1 - pruning.expectation)
 
         self.lll_obj.size_reduction(0, kappa+1)
         new_first, new_first_expo = self.M.get_r_exp(kappa, kappa)

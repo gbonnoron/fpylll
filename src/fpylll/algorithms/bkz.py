@@ -14,7 +14,7 @@ from fpylll import IntegerMatrix, GSO, LLL
 from fpylll import BKZ
 from fpylll import Enumeration
 from fpylll import EnumerationError
-from fpylll.util import gaussian_heuristic
+from fpylll.util import adjust_radius_to_gh_bound
 from .bkz_stats import BKZTreeTracer, dummy_tracer
 
 
@@ -59,7 +59,7 @@ class BKZReduction:
         :param max_row: stop processing in this row (exclusive)
 
         """
-        tracer = BKZTreeTracer(self, verbosity=params.flags & BKZ.VERBOSE)
+        tracer = BKZTreeTracer(self, verbosity=params.flags & BKZ.VERBOSE, start_clocks=True)
 
         if params.flags & BKZ.AUTO_ABORT:
             auto_abort = BKZ.AutoAbort(self.M, self.A.nrows)
@@ -83,6 +83,7 @@ class BKZReduction:
             if (params.flags & BKZ.MAX_TIME) and time.clock() - cputime_start >= params.max_time:
                 break
 
+        tracer.exit()
         self.trace = tracer.trace
         return clean
 
@@ -150,7 +151,7 @@ class BKZReduction:
 
         if params.flags & BKZ.GH_BND:
             root_det = self.M.get_root_det(kappa, kappa+block_size)
-            max_dist, expo = gaussian_heuristic(max_dist, expo, block_size, root_det, params.gh_factor)
+            max_dist, expo = adjust_radius_to_gh_bound(max_dist, expo, block_size, root_det, params.gh_factor)
 
         try:
             enum_obj = Enumeration(self.M)

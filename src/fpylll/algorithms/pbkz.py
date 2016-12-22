@@ -14,7 +14,7 @@ from fpylll import BKZ, Enumeration, EnumerationError
 from fpylll.algorithms.bkz import BKZReduction as BKZ1
 from fpylll.algorithms.bkz2 import BKZReduction as BKZ2
 from fpylll.algorithms.bkz_stats import BKZTreeTracer, dummy_tracer
-from fpylll.util import gaussian_heuristic
+from fpylll.util import adjust_radius_to_gh_bound
 
 
 class BKZReduction(BKZ2):
@@ -97,7 +97,7 @@ class BKZReduction(BKZ2):
 
         if params.flags & BKZ.GH_BND and block_size > 30:
             root_det = self.M.get_root_det(kappa, kappa + block_size)
-            radius, expo = gaussian_heuristic(radius, expo, block_size, root_det, params.gh_factor)
+            radius, expo = adjust_radius_to_gh_bound(radius, expo, block_size, root_det, params.gh_factor)
 
         pruning = self.get_pruning(kappa, block_size, params, tracer)
 
@@ -105,7 +105,7 @@ class BKZReduction(BKZ2):
             enum_obj = Enumeration(self.M)
             with tracer.context("enumeration",
                                 enum_obj=enum_obj,
-                                probability=pruning.probability,
+                                probability=pruning.expectation,
                                 full=block_size==params.block_size):
                 solution, max_dist = enum_obj.enumerate(kappa, kappa + block_size, radius, expo,
                                                         pruning=pruning.coefficients)[0]
@@ -115,9 +115,9 @@ class BKZReduction(BKZ2):
                 solution = self.A.multiply_left(solution, start=kappa)
 
         except EnumerationError:
-            solution = None
+            solution, max_dist = None, None
 
-        return solution, tracer.trace, pruning.probability
+        return solution, max_dist, tracer.trace, pruning.expectation
 
     def parallel_svp_reduction(self, kappa, block_size, params, tracer=dummy_tracer):
         """
@@ -133,7 +133,7 @@ class BKZReduction(BKZ2):
         """
         # calling fork is expensive so we simply revert to the sequential code for small block sizes
         if block_size < 70:
-            return self.svp_reduction(kappa, block_size, params, tracer=dummy_tracer)
+            return self.svp_reduction(kappa, block_size, params, tracer=tracer)
 
         self.lll_obj.size_reduction(0, kappa+1)
         old_first, old_first_expo = self.M.get_r_exp(kappa, kappa)
@@ -159,15 +159,16 @@ class BKZReduction(BKZ2):
 
             solutions, rerandomize = set(), True
             for i in range(self.ncores):
-                solution, trace, probability = pipes[i].recv()
+                solution, length, trace, probability = pipes[i].recv()
                 remaining_probability *= (1 - probability)
                 for child in trace.children:
                     tracer.current.child(child.label).merge(child)
                 if solution:
                     rerandomize = False
-                    solutions.add(solution)
+                    solutions.add((solution, length))
 
-            for solution in solutions:
+            solutions = sorted(solutions, key=lambda x: x[1])
+            for solution, length in solutions:
                 with tracer.context("postprocessing"):
                     solution = self.M.babai(solution, start=kappa, dimension=block_size)
                     self.svp_postprocessing(kappa, block_size, solution, tracer)
