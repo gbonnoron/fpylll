@@ -224,12 +224,12 @@ class BKZReduction(BKZ2):
                 self.ith_tour += 1
                 clean = self.tour(params.bkz_param, min_row, max_row, tracer)
             print "proba %.4f" % self.tuners[params.bkz_param.block_size].proba
-             for x in sorted(self.tuners[params.bkz_param.block_size].data.keys()):
-                 try:
-                     print x, "\t %d \t %.2f " % (self.tuners[params.bkz_param.block_size].counts[x], self.tuners[params.bkz_param.block_size].data[x])
-                 except:
-                     pass
-             print
+            for x in sorted(self.tuners[params.bkz_param.block_size].data.keys()):
+                try:
+                    print x, "\t %d \t %.2f " % (self.tuners[params.bkz_param.block_size].counts[x], self.tuners[params.bkz_param.block_size].data[x])
+                except:
+                    pass
+            print
             i += 1
             if (not clean) or params.bkz_param.block_size >= self.A.nrows:
                 break
