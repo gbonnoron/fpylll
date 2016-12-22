@@ -4,7 +4,7 @@ from sys import stderr
 from copy import copy
 
 from random import randint
-from fpylll import LLL, BKZ, Enumeration, EnumerationError, IntegerMatrix, prune
+from fpylll import LLL, BKZ, Enumeration, EnumerationStrategy, EnumerationError, IntegerMatrix, prune
 from fpylll.algorithms.bkz import BKZReduction as BKZBase
 from fpylll.algorithms.bkz2 import BKZReduction as BKZ2
 from fpylll.util import gaussian_heuristic
@@ -57,14 +57,16 @@ class BKZ3Param():
             Gram-Schmidt vectors are written to this file after each BKZ loop.
         """
         self.bkz_param = BKZ.Param(block_size, strategies,
-                                  delta, flags,
-                                  max_loops, max_time,
-                                  auto_abort,
-                                  gh_factor,
-                                  min_success_probability,
-                                  rerandomization_density,
-                                  dump_gso_filename)
-        self.lll_eta = 0.51
+                                   delta, flags,
+                                   max_loops, max_time,
+                                   auto_abort,
+                                   gh_factor,
+                                   min_success_probability,
+                                   rerandomization_density,
+                                   dump_gso_filename)
+        self.lll_eta = 0.51   # For weaker inner LLL
+        self.nr_hints = 0.5   # Relative to block_size. For enumerating more than the SVP to do multiple insertions
+        self.hints_bound = 1  # Keep the solution whose norm are <= hints_bound * norm(SVP)
 
     def set_lll_eta(self, eta):
         self.lll_eta = eta
@@ -149,13 +151,11 @@ class Tuner(object):
 
         R = tuple([M.get_r(i, i) for i in range(kappa, kappa+block_size)])
         overhead = (preproc_time + RESTART_PENALTY) * NODE_PER_SEC
-        start_from = self.last_prunings
-        pruning = prune(radius, overhead, target_prob, [R],
-                        descent_method="gradient", precision=53, start_from=start_from)
-        self.last_prunings = pruning.coefficients
-        self.proba = (self.proba * YOLO_MEMORY_LENGTH) + pruning.probability
+        self.last_prunings = prune(self.last_prunings, radius, overhead, target_prob, [R],
+                        descent_method="gradient", metric="probability", float_type="double", reset=False)
+        self.proba = (self.proba * YOLO_MEMORY_LENGTH) + self.last_prunings.metric
         self.proba /= YOLO_MEMORY_LENGTH + 1
-        return radius, pruning
+        return radius, self.last_prunings
 
     def enum_for_hints(self, M, kappa, block_size, preproc_time):
         return 0, None
@@ -164,7 +164,7 @@ class Tuner(object):
         if pruning is None:
             efficiency = 1. / time
         else:
-            efficiency = pruning.probability / time
+            efficiency = pruning.metric / time
         if preprocessing in self.data:
             x = self.data[preprocessing]
             c = self.counts[preprocessing]
@@ -203,11 +203,11 @@ class BKZReduction(BKZ2):
 
         """
         tracer = BKZTreeTracer(self, verbosity=params.bkz_param.flags & BKZ.VERBOSE)
+        self.params = params
 
         if params.bkz_param.flags & BKZ.AUTO_ABORT:
             auto_abort = BKZ.AutoAbort(self.M, self.A.nrows)
         if params.lll_eta is not LLL.DEFAULT_ETA:
-            print "Setting weaker LLL to eta=" + str(params.lll_eta)
             self.lll_obj = LLL.Reduction(self.M, flags=LLL.DEFAULT, eta=params.lll_eta)
 
         cputime_start = time.clock()
@@ -224,12 +224,12 @@ class BKZReduction(BKZ2):
                 self.ith_tour += 1
                 clean = self.tour(params.bkz_param, min_row, max_row, tracer)
             print "proba %.4f" % self.tuners[params.bkz_param.block_size].proba
-            for x in sorted(self.tuners[params.bkz_param.block_size].data.keys()):
-                try:
-                    print x, "\t %d \t %.2f " % (self.tuners[params.bkz_param.block_size].counts[x], self.tuners[params.bkz_param.block_size].data[x])
-                except:
-                    pass
-            print
+             for x in sorted(self.tuners[params.bkz_param.block_size].data.keys()):
+                 try:
+                     print x, "\t %d \t %.2f " % (self.tuners[params.bkz_param.block_size].counts[x], self.tuners[params.bkz_param.block_size].data[x])
+                 except:
+                     pass
+             print
             i += 1
             if (not clean) or params.bkz_param.block_size >= self.A.nrows:
                 break
@@ -243,7 +243,7 @@ class BKZReduction(BKZ2):
         self.trace = tracer.trace
         return clean
 
-    def svp_call(self, kappa, block_size, radius, pruning, for_hints=False, tracer=dummy_tracer):
+    def svp_call(self, kappa, block_size, radius, pruning, nr_hints=0, tracer=dummy_tracer):
         """Call SVP oracle
 
         :param kappa: current index
@@ -259,17 +259,14 @@ class BKZReduction(BKZ2):
         """
         solutions = []
         try:
-            if self.recycle:
-                enum_obj = Enumeration(self.M, block_size/2)
-            else:
-                enum_obj = Enumeration(self.M, 1)
+            enum_obj = Enumeration(self.M, nr_hints+1)
             if pruning is None:
                 with tracer.context("enumeration", enum_obj=enum_obj, probability=1.):
                     solutions = enum_obj.enumerate(kappa, kappa + block_size, radius, 0)
             else:
-                with tracer.context("enumeration", enum_obj=enum_obj, probability=pruning.probability):
+                with tracer.context("enumeration", enum_obj=enum_obj, probability=pruning.metric):
                     solutions = enum_obj.enumerate(kappa, kappa + block_size, radius, 0, pruning=pruning.coefficients)
-            return [sol for (sol, _) in solutions[0:]]
+            return [sol for (sol, _) in solutions]
         except EnumerationError:
             return None, []
 
@@ -306,22 +303,17 @@ class BKZReduction(BKZ2):
 
             with tracer.context("pruner"):
                 radius, pruning = self.tuners[block_size].get_pruning(self.M, kappa, tmp_target_prob, timer.elapsed())
-            solutions = self.svp_call(kappa, block_size, radius, pruning, tracer=tracer)
+            solutions = self.svp_call(kappa, block_size, radius, pruning, nr_hints=0, tracer=tracer)
             solution = solutions[0]
-            if solution is None:
+            if solution is None or len(solutions[1:]) == 0:
                 hints = []
             else:
-                hints = solutions[1:]
+                hints = self.filter_hints(solutions[1:], self.params.hints_bound*sum([i*i for i in solution]))
 
             if pruning is None:
                 rem_prob = 0
             else:
-                rem_prob *= (1 - pruning.probability)
-
-            # radius, pruning = self.tuner.enum_for_hints(self.M, kappa, block_size, timer.elapsed())
-            # if radius>0:
-            #     hints += self.svp_call(kappa, block_size, radius, pruning, for_hints=False, tracer=tracer)
-            # hints = self.filter_hints(hints)[:block_size/2]
+                rem_prob *= (1 - pruning.metric)
 
             self.tuners[block_size].feedback(preprocessing, pruning, timer.elapsed())
             timer.reset()
@@ -375,6 +367,8 @@ class BKZReduction(BKZ2):
                 return 0
             vectors = hints
         l = len(vectors)
+        #if (l > 1):
+        #    print >> stderr, "Tour", self.ith_tour, "Block", self.ith_block, "(", block_size,") inserting", l, "vectors"
 
         for vector in vectors:
             M.create_row()
@@ -394,27 +388,22 @@ class BKZReduction(BKZ2):
 
         return l
 
-    def filter_hints(self, hints):
-        return [v for v in hints if sum([x*x for x in v]) > 1.5]
+    def filter_hints(self, hints, bound):
+        return [v for v in hints if sum([x*x for x in v]) <= bound]
 
 n = 160
-bs = 60
-loops = 8
+bs = 25
+loops = 1
 A = IntegerMatrix.random(n, "qary", k=n//2, bits=30)
-print "Matrix ready"
 p = BKZ3Param(bs, max_loops=loops, min_success_probability=0.5, flags=BKZ.VERBOSE | BKZ.BOUNDED_LLL)
+p.set_lll_eta(0.51)
+p.nr_hints = 0.25
+p.hints_bound=0.9
 yBKZ = BKZReduction(copy(A))
+print "Go!"
 
 t = time.time()
 yBKZ(p)
 t = time.time() - t
 print "  time: %.2fs" % (t,)
 
-p2 = BKZ3Param(bs, max_loops=loops, min_success_probability=0.5, flags=BKZ.VERBOSE | BKZ.BOUNDED_LLL)
-p2.set_lll_eta(0.71)
-yBKZ = BKZReduction(A)
-
-t = time.time()
-yBKZ(p2)
-t = time.time() - t
-print "  time: %.2fs" % (t,)
