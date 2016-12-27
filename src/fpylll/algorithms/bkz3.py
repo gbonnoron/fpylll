@@ -4,7 +4,7 @@ from sys import stderr
 from copy import copy
 
 from random import randint
-from fpylll import LLL, BKZ, Enumeration, EnumerationStrategy, EnumerationError, IntegerMatrix, prune
+from fpylll import LLL, BKZ, Enumeration, EvaluatorStrategy, EnumerationError, IntegerMatrix, prune
 from fpylll.algorithms.bkz import BKZReduction as BKZBase
 from fpylll.algorithms.bkz2 import BKZReduction as BKZ2
 from fpylll.util import gaussian_heuristic
