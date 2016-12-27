@@ -7,7 +7,7 @@ from random import randint
 from fpylll import LLL, BKZ, Enumeration, EvaluatorStrategy, EnumerationError, IntegerMatrix, prune
 from fpylll.algorithms.bkz import BKZReduction as BKZBase
 from fpylll.algorithms.bkz2 import BKZReduction as BKZ2
-from fpylll.util import gaussian_heuristic
+from fpylll.util import adjust_radius_to_gh_bound
 from fpylll.algorithms.bkz_stats import BKZTreeTracer
 from fpylll.algorithms.bkz_stats import dummy_tracer
 from math import ceil
@@ -142,7 +142,7 @@ class Tuner(object):
 
         radius = M.get_r(kappa, kappa) * .99
         root_det = M.get_root_det(kappa, kappa + block_size - 1)
-        gh_radius, ge = gaussian_heuristic(radius, 0, block_size, root_det, 1.)
+        gh_radius, ge = adjust_radius_to_gh_bound(radius, 0, block_size, root_det, 1.)
         if block_size > 30:
             radius = min(radius, 1.21 * gh_radius * 2**ge)
 
