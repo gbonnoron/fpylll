@@ -216,6 +216,9 @@ class BKZReduction(BKZ2):
         with tracer.context("lll"):
             self.lll_obj()
 
+        with tracer.context("rampup", -1):
+            self.preprocessing(params.bkz_param.block_size, min_row, max_row, start=10, step=10, tracer=tracer)
+
         i = 0
         self.ith_tour = 0
         while True:
@@ -224,11 +227,11 @@ class BKZReduction(BKZ2):
                 self.ith_tour += 1
                 clean = self.tour(params.bkz_param, min_row, max_row, tracer=tracer)
             print "proba %.4f" % self.tuners[params.bkz_param.block_size].proba
-            for x in sorted(self.tuners[params.bkz_param.block_size].data.keys()):
-                try:
-                    print x, "\t %d \t %.2f " % (self.tuners[params.bkz_param.block_size].counts[x], self.tuners[params.bkz_param.block_size].data[x])
-                except:
-                    pass
+            #for x in sorted(self.tuners[params.bkz_param.block_size].data.keys()):
+            #    try:
+            #        print x, "\t %d \t %.2f " % (self.tuners[params.bkz_param.block_size].counts[x], self.tuners[params.bkz_param.block_size].data[x])
+            #    except:
+            #        pass
             print
             i += 1
             if (not clean) or params.bkz_param.block_size >= self.A.nrows:
@@ -242,6 +245,17 @@ class BKZReduction(BKZ2):
 
         self.trace = tracer.trace
         return clean
+
+    def preprocessing(self, block_size_max, min_row, max_row, start=0, step=10, tracer=dummy_tracer):
+        block_sizes = range(start, block_size_max, step)
+        block_sizes.append(block_size_max-5)
+        print "Ramp up with blocksizes:" + str(block_sizes)
+        tour_number = -len(block_sizes)-1
+        for i in block_sizes:
+            p = self.params.bkz_param.__class__(block_size=i, strategies=self.params.bkz_param.strategies, flags=self.params.bkz_param.flags)
+            with tracer.context("tour", tour_number):
+                self.tour(p, min_row, max_row, tracer=tracer)
+            tour_number += 1
 
     def svp_call(self, kappa, block_size, radius, pruning, nr_hints=0, tracer=dummy_tracer):
         """Call SVP oracle
@@ -259,7 +273,7 @@ class BKZReduction(BKZ2):
         """
         solutions = []
         try:
-            enum_obj = Enumeration(self.M, nr_hints+1)
+            enum_obj = Enumeration(self.M, nr_hints+1, EvaluatorStrategy.OPPORTUNISTIC_N_SOLUTIONS)
             if pruning is None:
                 with tracer.context("enumeration", enum_obj=enum_obj, probability=1., full=block_size==self.params.bkz_param.block_size):
                     solutions = enum_obj.enumerate(kappa, kappa + block_size, radius, 0)
@@ -297,13 +311,15 @@ class BKZReduction(BKZ2):
 
             with tracer.context("preprocessing"):
                 preprocessing = self.tuners[block_size].get_preprocessing_block_sizes()
-#                if len(preprocessing) > 0:
-#                    print >> stderr, self.ith_tour, self.ith_block, block_size, preprocessing
+                # if len(preprocessing) > 0 and block_size == 60:
+                #     print >> stderr, self.ith_tour, self.ith_block, block_size, preprocessing
                 self.svp_preprocessing(kappa, block_size, params, preprocessing, tracer)
 
             with tracer.context("pruner"):
                 radius, pruning = self.tuners[block_size].get_pruning(self.M, kappa, tmp_target_prob, timer.elapsed())
-            solutions = self.svp_call(kappa, block_size, radius, pruning, nr_hints=0, tracer=tracer)
+
+            nb_hints = 0
+            solutions = self.svp_call(kappa, block_size, radius, pruning, nr_hints=nb_hints, tracer=tracer)
             solution = solutions[0]
             if solution is None or len(solutions[1:]) == 0:
                 hints = []
@@ -367,8 +383,8 @@ class BKZReduction(BKZ2):
                 return 0
             vectors = hints
         l = len(vectors)
-        #if (l > 1):
-        #    print >> stderr, "Tour", self.ith_tour, "Block", self.ith_block, "(", block_size,") inserting", l, "vectors"
+        if (l > 1):
+            print >> stderr, "Tour", self.ith_tour, "Block", self.ith_block, "(", block_size, ") inserting", l, "vectors"
 
         for vector in vectors:
             M.create_row()
@@ -393,12 +409,12 @@ class BKZReduction(BKZ2):
 
 n = 160
 bs = 60
-loops = 8
+loops = 1
 A = IntegerMatrix.random(n, "qary", k=n//2, bits=30)
 p = BKZ3Param(bs, max_loops=loops, min_success_probability=0.5, flags=BKZ.VERBOSE | BKZ.BOUNDED_LLL)
-p.set_lll_eta(0.51)
+p.set_lll_eta(0.71)
 p.nr_hints = 0.25
-p.hints_bound=0.9
+p.hints_bound = 0.9
 yBKZ = BKZReduction(copy(A))
 print "Go!"
 
@@ -406,4 +422,5 @@ t = time.time()
 yBKZ(p)
 t = time.time() - t
 print "  time: %.2fs" % (t,)
-
+print
+#print yBKZ.trace.report()
