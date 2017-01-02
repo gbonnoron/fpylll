@@ -8,6 +8,6 @@ from .fplll.bkz import BKZ
 from .fplll.bkz_param import load_strategies_json
 from .fplll.svpcvp import SVP
 from .fplll.svpcvp import CVP
-from .fplll.pruner import prune
+from .fplll.pruner import prune, svp_probability
 from .util import ReductionError
 from .util import set_random_seed, set_precision, get_precision
