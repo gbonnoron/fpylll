@@ -67,9 +67,13 @@ class BKZ3Param():
         self.lll_eta = 0.51   # For weaker inner LLL
         self.nr_hints = 0.5   # Relative to block_size. For enumerating more than the SVP to do multiple insertions
         self.hints_bound = 1  # Keep the solution whose norm are <= hints_bound * norm(SVP)
+        self.rampup = False   # Activate or not a progressive-BKZ to begin
 
     def set_lll_eta(self, eta):
         self.lll_eta = eta
+
+    def with_rampup(self):
+        self.rampup = True
 
 
 class Timer:
@@ -216,8 +220,9 @@ class BKZReduction(BKZ2):
         with tracer.context("lll"):
             self.lll_obj()
 
-        with tracer.context("rampup", -1):
-            self.preprocessing(params.bkz_param.block_size, min_row, max_row, start=10, step=10, tracer=tracer)
+        if params.rampup:
+            with tracer.context("rampup", -1):
+                self.preprocessing(params.bkz_param.block_size, min_row, max_row, start=10, step=10, tracer=tracer)
 
         i = 0
         self.ith_tour = 0
@@ -250,7 +255,7 @@ class BKZReduction(BKZ2):
         block_sizes = range(start, block_size_max, step)
         block_sizes.append(block_size_max-5)
         print "Ramp up with blocksizes:" + str(block_sizes)
-        tour_number = -len(block_sizes)-1
+        tour_number = -len(block_sizes)
         for i in block_sizes:
             p = self.params.bkz_param.__class__(block_size=i, strategies=self.params.bkz_param.strategies, flags=self.params.bkz_param.flags)
             with tracer.context("tour", tour_number):
@@ -280,9 +285,9 @@ class BKZReduction(BKZ2):
             else:
                 with tracer.context("enumeration", enum_obj=enum_obj, probability=svp_probability(pruning), full=block_size==self.params.bkz_param.block_size):
                     solutions = enum_obj.enumerate(kappa, kappa + block_size, radius, 0, pruning=pruning.coefficients)
-            return [sol for (sol, _) in solutions]
+            return solutions
         except EnumerationError:
-            return None, []
+            return []
 
     def svp_reduction(self, kappa, block_size, params, tracer=dummy_tracer):
         """Find shortest vector in projected lattice of dimension ``block_size`` and insert into
@@ -318,13 +323,16 @@ class BKZReduction(BKZ2):
             with tracer.context("pruner"):
                 radius, pruning = self.tuners[block_size].get_pruning(self.M, kappa, tmp_target_prob, timer.elapsed())
 
-            nb_hints = 0
+            nb_hints = 5  #int(block_size*0.2)
             solutions = self.svp_call(kappa, block_size, radius, pruning, nr_hints=nb_hints, tracer=tracer)
-            solution = solutions[0]
-            if solution is None or len(solutions[1:]) == 0:
+            if len(solutions) == 0:
+                solution = None
+            else:
+                solution = solutions[0][0]
+            if len(solutions) <= 1:
                 hints = []
             else:
-                hints = self.filter_hints(solutions[1:], self.params.hints_bound*sum([i*i for i in solution]))
+                hints = self.filter_hints(solutions[1:], self.params.hints_bound*solutions[0][1])
 
             if pruning is None:
                 rem_prob = 0
@@ -405,16 +413,17 @@ class BKZReduction(BKZ2):
         return l
 
     def filter_hints(self, hints, bound):
-        return [v for v in hints if sum([x*x for x in v]) <= bound]
+        return [v[0] for v in hints if v[1] <= bound]
 
 n = 160
 bs = 60
-loops = 1
+loops = 3
 A = IntegerMatrix.random(n, "qary", k=n//2, bits=30)
 p = BKZ3Param(bs, max_loops=loops, min_success_probability=0.5, flags=BKZ.VERBOSE | BKZ.BOUNDED_LLL)
+#p.with_rampup()
 p.set_lll_eta(0.71)
 p.nr_hints = 0.25
-p.hints_bound = 0.9
+p.hints_bound = 1
 yBKZ = BKZReduction(copy(A))
 print "Go!"
 
@@ -424,3 +433,13 @@ t = time.time() - t
 print "  time: %.2fs" % (t,)
 print
 #print yBKZ.trace.report()
+
+# p = BKZ.Param(bs, strategies="default.json", max_loops=loops, min_success_probability=0.5, flags=BKZ.VERBOSE | BKZ.BOUNDED_LLL | BKZ.GH_BND)
+# bkz2o = BKZ2(copy(A))
+# print "Go!"
+# 
+# t = time.time()
+# bkz2o(p)
+# t = time.time() - t
+# print "  time: %.2fs" % (t,)
+# print
