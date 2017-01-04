@@ -376,7 +376,7 @@ class BKZReduction(BKZ2):
         with tracer.context("lll"):
             # TODO validate, size_reduction seems needed
             self.lll_obj.size_reduction(kappa, kappa + block_size, kappa)
-            if self.M.get_current_slope(kappa, kappa + block_size) < -0.085:
+            if self.M.get_current_slope(kappa, kappa + block_size) < -0.084:
                 self.lll_obj(kappa, kappa, kappa + block_size, kappa)
             #clean &= BKZBase.svp_preprocessing(self, kappa, block_size, param, tracer)
 
