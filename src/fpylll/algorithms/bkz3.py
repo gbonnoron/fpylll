@@ -4,7 +4,7 @@ from sys import stderr
 from copy import copy
 
 from random import randint
-from fpylll import LLL, BKZ, Enumeration, EvaluatorStrategy, EnumerationError, IntegerMatrix, prune, svp_probability
+from fpylll import LLL, BKZ, Enumeration, EvaluatorStrategy, EnumerationError, IntegerMatrix, prune
 from fpylll.algorithms.bkz import BKZReduction as BKZBase
 from fpylll.algorithms.bkz2 import BKZReduction as BKZ2
 from fpylll.util import adjust_radius_to_gh_bound
@@ -157,7 +157,7 @@ class Tuner(object):
         overhead = (preproc_time + RESTART_PENALTY) * NODE_PER_SEC
         self.last_prunings = prune(radius, overhead, target_prob, [R],
                         descent_method="gradient", metric="probability", float_type="double", pruning=self.last_prunings)
-        self.proba = (self.proba * YOLO_MEMORY_LENGTH) + svp_probability(self.last_prunings)
+        self.proba = (self.proba * YOLO_MEMORY_LENGTH) + self.last_prunings.expectation
         self.proba /= YOLO_MEMORY_LENGTH + 1
         return radius, self.last_prunings
 
@@ -168,7 +168,7 @@ class Tuner(object):
         if pruning is None:
             efficiency = 1. / time
         else:
-            efficiency = svp_probability(pruning) / time
+            efficiency = pruning.expectation / time
         if preprocessing in self.data:
             x = self.data[preprocessing]
             c = self.counts[preprocessing]
@@ -283,7 +283,7 @@ class BKZReduction(BKZ2):
                 with tracer.context("enumeration", enum_obj=enum_obj, probability=1., full=block_size==self.params.bkz_param.block_size):
                     solutions = enum_obj.enumerate(kappa, kappa + block_size, radius, 0)
             else:
-                with tracer.context("enumeration", enum_obj=enum_obj, probability=svp_probability(pruning), full=block_size==self.params.bkz_param.block_size):
+                with tracer.context("enumeration", enum_obj=enum_obj, probability=pruning.expectation, full=block_size==self.params.bkz_param.block_size):
                     solutions = enum_obj.enumerate(kappa, kappa + block_size, radius, 0, pruning=pruning.coefficients)
             return solutions
         except EnumerationError:
@@ -336,7 +336,7 @@ class BKZReduction(BKZ2):
             if pruning is None:
                 rem_prob = 0
             else:
-                rem_prob *= (1 - svp_probability(pruning))
+                rem_prob *= (1 - pruning.expectation)
 
             self.tuners[block_size].feedback(preprocessing, pruning, timer.elapsed())
             timer.reset()
@@ -348,10 +348,14 @@ class BKZReduction(BKZ2):
     def svp_preprocessing(self, kappa, block_size, param, preprocessing_block_sizes=None, tracer=dummy_tracer):
         clean = True
 
+        # TODO validate, size_reduction seems needed
+        # self.lll_obj.size_reduction(kappa, kappa + block_size, kappa)
+        # if self.M.get_current_slope(kappa, kappa + block_size) < -0.085:
+        #     self.lll_obj(kappa, kappa, kappa + block_size, kappa)
         clean &= BKZBase.svp_preprocessing(self, kappa, block_size, param, tracer)
 
         for preproc in preprocessing_block_sizes:
-            prepar = param.__class__(block_size=preproc, strategies=param.strategies, flags=BKZ.GH_BND)
+            prepar = param.__class__(block_size=preproc, strategies=param.strategies, flags=BKZ.GH_BND|BKZ.BOUNDED_LLL)
             clean &= self.tour(prepar, kappa, kappa + block_size, tracer=tracer)
 
         return clean
@@ -369,7 +373,10 @@ class BKZReduction(BKZ2):
         """
         M = self.M
 
-        if (solution is not None) and len(hints) == 0:
+        if solution is None:
+            return 0
+
+        if len(hints) == 0:
             nonzero_vectors = len([x for x in solution if x])
             if nonzero_vectors == 1:
                 first_nonzero_vector = None
@@ -383,12 +390,8 @@ class BKZReduction(BKZ2):
                     self.lll_obj.size_reduction(kappa, kappa + first_nonzero_vector + 1)
                 return 1
 
-        if solution is not None:
-            vectors = [solution] + hints
-        else:
-            if len(hints) == 0:
-                return 0
-            vectors = hints
+        vectors = [solution] + hints
+
         l = len(vectors)
         if (l > 1):
             print >> stderr, "Tour", self.ith_tour, "Block", self.ith_block, "(", block_size, ") inserting", l, "vectors"
