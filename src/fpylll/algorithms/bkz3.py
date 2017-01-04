@@ -255,12 +255,12 @@ class BKZReduction(BKZ2):
         block_sizes = range(start, block_size_max, step)
         block_sizes.append(block_size_max-5)
         print "Ramp up with blocksizes:" + str(block_sizes)
-        tour_number = -len(block_sizes)
+        self.ith_tour = -len(block_sizes)
         for i in block_sizes:
             p = self.params.bkz_param.__class__(block_size=i, strategies=self.params.bkz_param.strategies, flags=self.params.bkz_param.flags)
-            with tracer.context("tour", tour_number):
+            with tracer.context("tour", self.ith_tour):
                 self.tour(p, min_row, max_row, tracer=tracer)
-            tour_number += 1
+            self.ith_tour += 1
 
     def svp_call(self, kappa, block_size, radius, pruning, nr_hints=0, tracer=dummy_tracer):
         """Call SVP oracle
@@ -323,8 +323,7 @@ class BKZReduction(BKZ2):
             with tracer.context("pruner"):
                 radius, pruning = self.tuners[block_size].get_pruning(self.M, kappa, tmp_target_prob, timer.elapsed())
 
-            nb_hints = 5  #int(block_size*0.2)
-            solutions = self.svp_call(kappa, block_size, radius, pruning, nr_hints=nb_hints, tracer=tracer)
+            solutions = self.svp_call(kappa, block_size, radius, pruning, nr_hints=0, tracer=tracer)
             if len(solutions) == 0:
                 solution = None
             else:
@@ -420,10 +419,10 @@ bs = 60
 loops = 3
 A = IntegerMatrix.random(n, "qary", k=n//2, bits=30)
 p = BKZ3Param(bs, max_loops=loops, min_success_probability=0.5, flags=BKZ.VERBOSE | BKZ.BOUNDED_LLL)
-#p.with_rampup()
+p.with_rampup()
 p.set_lll_eta(0.71)
-p.nr_hints = 0.25
-p.hints_bound = 1
+#p.nr_hints = 0.25
+#p.hints_bound = 1.25
 yBKZ = BKZReduction(copy(A))
 print "Go!"
 
