@@ -348,11 +348,12 @@ class BKZReduction(BKZ2):
     def svp_preprocessing(self, kappa, block_size, param, preprocessing_block_sizes=None, tracer=dummy_tracer):
         clean = True
 
-        # TODO validate, size_reduction seems needed
-        # self.lll_obj.size_reduction(kappa, kappa + block_size, kappa)
-        # if self.M.get_current_slope(kappa, kappa + block_size) < -0.085:
-        #     self.lll_obj(kappa, kappa, kappa + block_size, kappa)
-        clean &= BKZBase.svp_preprocessing(self, kappa, block_size, param, tracer)
+        with tracer.context("lll"):
+            # TODO validate, size_reduction seems needed
+            # self.lll_obj.size_reduction(kappa, kappa + block_size, kappa)
+            if self.M.get_current_slope(kappa, kappa + block_size) < -0.085:
+                self.lll_obj(kappa, kappa, kappa + block_size, kappa)
+            #clean &= BKZBase.svp_preprocessing(self, kappa, block_size, param, tracer)
 
         for preproc in preprocessing_block_sizes:
             prepar = param.__class__(block_size=preproc, strategies=param.strategies, flags=BKZ.GH_BND|BKZ.BOUNDED_LLL)
