@@ -230,7 +230,7 @@ class BKZReduction(BKZ2):
             with tracer.context("tour", i):
                 self.ith_block = 0
                 self.ith_tour += 1
-                clean = self.tour(params.bkz_param, min_row, max_row, tracer=tracer)
+                clean = self.tour(params.bkz_param, min_row, max_row, tracer=tracer, top_level=True)
             print "proba %.4f" % self.tuners[params.bkz_param.block_size].proba
             #for x in sorted(self.tuners[params.bkz_param.block_size].data.keys()):
             #    try:
@@ -249,6 +249,26 @@ class BKZReduction(BKZ2):
                 break
 
         self.trace = tracer.trace
+        return clean
+
+    def tour(self, params, min_row=0, max_row=-1, tracer=dummy_tracer, top_level=False):
+        """One BKZ loop over all indices.
+
+        :param params: BKZ parameters
+        :param min_row: start index ≥ 0
+        :param max_row: last index ≤ n
+
+        :returns: ``True`` if no change was made and ``False`` otherwise
+        """
+        if max_row == -1:
+            max_row = self.A.nrows
+
+        clean = True
+
+        for kappa in range(min_row, max_row-2):
+            block_size = min(params.block_size, max_row - kappa)
+            clean &= self.svp_reduction(kappa, block_size, params, tracer, top_level=top_level)
+
         return clean
 
     def preprocessing(self, block_size_max, min_row, max_row, start=0, step=10, tracer=dummy_tracer):
@@ -289,7 +309,7 @@ class BKZReduction(BKZ2):
         except EnumerationError:
             return []
 
-    def svp_reduction(self, kappa, block_size, params, tracer=dummy_tracer):
+    def svp_reduction(self, kappa, block_size, params, tracer=dummy_tracer, top_level=False):
         """Find shortest vector in projected lattice of dimension ``block_size`` and insert into
         current basis.
 
@@ -304,6 +324,11 @@ class BKZReduction(BKZ2):
         timer = Timer()
         rem_prob, inserted = 1.0, 1
         target_prob = params.min_success_probability
+
+        # if top_level:
+        #     # do a full LLL up to kappa + block_size
+        #     with tracer.context("lll"):
+        #         self.lll_obj(0, kappa, kappa+block_size, 0)
 
         if (block_size == 60):
             self.ith_block += 1
@@ -341,7 +366,7 @@ class BKZReduction(BKZ2):
             self.tuners[block_size].feedback(preprocessing, pruning, timer.elapsed())
             timer.reset()
             with tracer.context("postprocessing"):
-                inserted = self.svp_postprocessing(kappa, block_size, solution, hints, tracer)
+                inserted = self.svp_postprocessing(kappa, block_size, solution, hints, tracer, top_level=top_level)
 
         return True
 
@@ -350,7 +375,7 @@ class BKZReduction(BKZ2):
 
         with tracer.context("lll"):
             # TODO validate, size_reduction seems needed
-            # self.lll_obj.size_reduction(kappa, kappa + block_size, kappa)
+            self.lll_obj.size_reduction(kappa, kappa + block_size, kappa)
             if self.M.get_current_slope(kappa, kappa + block_size) < -0.085:
                 self.lll_obj(kappa, kappa, kappa + block_size, kappa)
             #clean &= BKZBase.svp_preprocessing(self, kappa, block_size, param, tracer)
@@ -361,7 +386,7 @@ class BKZReduction(BKZ2):
 
         return clean
 
-    def svp_postprocessing(self, kappa, block_size, solution, hints, tracer):
+    def svp_postprocessing(self, kappa, block_size, solution, hints, tracer, top_level):
         """Insert SVP solution into basis and LLL reduce.
 
         :param solution: coordinates of an SVP solution
@@ -372,10 +397,11 @@ class BKZReduction(BKZ2):
 
         :returns: ``True`` if no change was made and ``False`` otherwise
         """
-        M = self.M
-
         if solution is None:
             return 0
+
+        M = self.M
+        lll_min = 0 if top_level else kappa
 
         if len(hints) == 0:
             nonzero_vectors = len([x for x in solution if x])
@@ -389,6 +415,8 @@ class BKZReduction(BKZ2):
                 M.move_row(kappa + first_nonzero_vector, kappa)
                 with tracer.context("lll"):
                     self.lll_obj.size_reduction(kappa, kappa + first_nonzero_vector + 1)
+                    # self.lll_obj.size_reduction(lll_min, kappa + first_nonzero_vector + 1)
+                    # self.lll_obj(lll_min, kappa, kappa + 1, lll_min)
                 return 1
 
         vectors = [solution] + hints
@@ -408,6 +436,8 @@ class BKZReduction(BKZ2):
 
         with tracer.context("postproc"):
             self.lll_obj(kappa, kappa, kappa+block_size+l)
+            # self.lll_obj(kappa, kappa, kappa+block_size+l, lll_min)
+            # self.lll_obj(lll_min, kappa, kappa + block_size + l, lll_min)
 
         for i in range(l):
             M.move_row(kappa+block_size, M.d-1)
